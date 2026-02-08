@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import "./App.scss";
 import { LiveAPIProvider } from "./contexts/LiveAPIContext";
+import PasswordGate from "./components/PasswordGate";
 import ControlTray from "./components/control-tray/ControlTray";
 import { LiveClientOptions } from "./types";
 import { useLiveAPIContext } from "./contexts/LiveAPIContext";
@@ -293,11 +294,13 @@ function VoiceChatApp() {
 
 function App() {
   return (
-    <div className="App">
-      <LiveAPIProvider options={apiOptions}>
-        <VoiceChatApp />
-      </LiveAPIProvider>
-    </div>
+    <PasswordGate>
+      <div className="App">
+        <LiveAPIProvider options={apiOptions}>
+          <VoiceChatApp />
+        </LiveAPIProvider>
+      </div>
+    </PasswordGate>
   );
 }
 
