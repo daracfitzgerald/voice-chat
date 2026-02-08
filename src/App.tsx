@@ -5,7 +5,7 @@ import ControlTray from "./components/control-tray/ControlTray";
 import { LiveClientOptions } from "./types";
 import { useLiveAPIContext } from "./contexts/LiveAPIContext";
 import { useLoggerStore } from "./lib/store-logger";
-import { Modality } from "@google/genai";
+import { Modality, Type } from "@google/genai";
 
 const API_KEY = process.env.REACT_APP_GEMINI_API_KEY as string;
 if (typeof API_KEY !== "string") {
@@ -17,7 +17,13 @@ const apiOptions: LiveClientOptions = {
 };
 
 // System instruction built from Dara's context files
+// Voice bridge relay config
+const VOICE_BRIDGE_URL = process.env.REACT_APP_VOICE_BRIDGE_URL || 'http://100.69.233.8:5052';
+const VOICE_BRIDGE_SECRET = process.env.REACT_APP_VOICE_BRIDGE_SECRET || 'voice-bridge-2026';
+
 const SYSTEM_INSTRUCTION = `You are Dara's AI assistant. You have access to his context and memory below. Be helpful, direct, and conversational. When the conversation ends, summarise key decisions or action items.
+
+IMPORTANT: You have function calling tools available. When Dara asks you to DO something (create a task, check status, build something, run the batch, search for info), use the appropriate function. These functions send commands to OpenClaw, his AI agent system, which will execute them. After calling a function, tell Dara you've sent the request and he'll see the result in Telegram.
 
 --- USER CONTEXT ---
 - Name: Dara Fitzgerald
@@ -62,6 +68,21 @@ function VoiceChatApp() {
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
 
+  // Send command to voice bridge relay
+  const sendToBridge = useCallback(async (action: string, params: Record<string, string>) => {
+    try {
+      const resp = await fetch(`${VOICE_BRIDGE_URL}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: VOICE_BRIDGE_SECRET, action, params }),
+      });
+      const data = await resp.json();
+      return { success: data.status === 'sent', message: data.message || 'sent' };
+    } catch (e) {
+      return { success: false, message: `Bridge error: ${e}` };
+    }
+  }, []);
+
   // Set system instruction on mount
   useEffect(() => {
     setConfig({
@@ -69,10 +90,72 @@ function VoiceChatApp() {
         parts: [{ text: SYSTEM_INSTRUCTION }],
       },
       responseModalities: [Modality.AUDIO],
+      tools: [{
+        functionDeclarations: [
+          {
+            name: 'create_task',
+            description: 'Create a new task on the kanban board',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING, description: 'Task title' },
+                description: { type: Type.STRING, description: 'Task description' },
+              },
+              required: ['title'],
+            },
+          },
+          {
+            name: 'run_batch',
+            description: 'Run the batch processor to handle autonomous tasks on the kanban board',
+            parameters: { type: Type.OBJECT, properties: {} },
+          },
+          {
+            name: 'check_status',
+            description: 'Ask OpenClaw for a status update on current work',
+            parameters: { type: Type.OBJECT, properties: {} },
+          },
+          {
+            name: 'search',
+            description: 'Search across vault, kanban, memory, and sessions',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                query: { type: Type.STRING, description: 'What to search for' },
+              },
+              required: ['query'],
+            },
+          },
+          {
+            name: 'build',
+            description: 'Ask OpenClaw to orchestrate building something end-to-end',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                description: { type: Type.STRING, description: 'What to build' },
+              },
+              required: ['description'],
+            },
+          },
+          {
+            name: 'send_message',
+            description: 'Send a free-form command or message to OpenClaw',
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                message: { type: Type.STRING, description: 'The message or command to send' },
+              },
+              required: ['message'],
+            },
+          },
+        ],
+      }],
     });
   }, [setConfig]);
 
-  // Extract conversation from logs
+  // Track which function calls we've already handled
+  const handledCalls = useRef<Set<string>>(new Set());
+
+  // Extract conversation from logs and handle function calls
   useEffect(() => {
     const entries: ConversationEntry[] = [];
     for (const log of logs) {
@@ -86,7 +169,7 @@ function VoiceChatApp() {
             }
           }
         }
-        // Model text response
+        // Model text response or function call
         if ("serverContent" in log.message) {
           const sc = (log.message as any).serverContent;
           if (sc?.modelTurn?.parts) {
@@ -94,13 +177,36 @@ function VoiceChatApp() {
               if (part.text && part.text.trim() && part.text !== "\n") {
                 entries.push({ role: "model", text: part.text, time: log.date });
               }
+              // Handle function calls
+              if (part.functionCall) {
+                const fc = part.functionCall;
+                const callId = `${fc.name}-${JSON.stringify(fc.args)}-${log.date.getTime()}`;
+                if (!handledCalls.current.has(callId)) {
+                  handledCalls.current.add(callId);
+                  entries.push({ role: "model", text: `🔧 Sending to OpenClaw: ${fc.name}(${JSON.stringify(fc.args || {})})`, time: log.date });
+                  
+                  // Fire and forget - send to bridge
+                  const action = fc.name === 'send_message' ? 'send_message' : fc.name;
+                  const params = fc.args || {};
+                  
+                  if (action === 'send_message') {
+                    fetch(`${VOICE_BRIDGE_URL}/command`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ secret: VOICE_BRIDGE_SECRET, command: params.message }),
+                    }).catch(console.error);
+                  } else {
+                    sendToBridge(action, params).catch(console.error);
+                  }
+                }
+              }
             }
           }
         }
       }
     }
     setConversation(entries);
-  }, [logs]);
+  }, [logs, sendToBridge]);
 
   // Auto-scroll conversation
   useEffect(() => {
