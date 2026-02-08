@@ -56,7 +56,7 @@ type ConversationEntry = {
 
 function VoiceChatApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { client, setConfig, connected } = useLiveAPIContext();
+  const { setConfig, connected } = useLiveAPIContext();
   const { logs } = useLoggerStore();
   const [conversation, setConversation] = useState<ConversationEntry[]>([]);
   const conversationEndRef = useRef<HTMLDivElement>(null);

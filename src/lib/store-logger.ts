@@ -16,7 +16,7 @@
 
 import { create } from "zustand";
 import { StreamingLog } from "../types";
-import { mockLogs } from "../components/logger/mock-logs";
+// import { mockLogs } from "../components/logger/mock-logs";
 
 interface StoreLoggerState {
   maxLogs: number;
