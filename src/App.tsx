@@ -275,11 +275,20 @@ function VoiceChatApp() {
           }).then(r => r.json());
         }
 
-        // Send to bridge, then poll for result
+        // Send immediate tool response so Gemini can speak while we wait
         bridgePromise.then(data => {
           console.log('[voice-bridge] bridge response:', data);
+          // Immediately tell Gemini the request was sent
+          client.sendToolResponse({
+            functionResponses: [{
+              id: fcId,
+              name: fc.name,
+              response: { result: "I've sent that to OpenClaw. It's being processed now. I'll let you know when I hear back." },
+            }],
+          });
+          // Then poll for the real result and inject it as a text message
           if (data.commandId) {
-            pollForResult(data.commandId, fc.name, fcId);
+            pollForResult(data.commandId, fc.name, `${fcId}-result`);
           }
         }).catch(e => console.error('[voice-bridge] error:', e));
       }

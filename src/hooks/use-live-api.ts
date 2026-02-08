@@ -66,6 +66,19 @@ export function useLiveAPI(options: LiveClientOptions): UseLiveAPIResults {
 
     const onClose = () => {
       setConnected(false);
+      // Auto-reconnect after 2 seconds if we were previously connected
+      if (config && model) {
+        console.log('[auto-reconnect] Connection lost, reconnecting in 2s...');
+        setTimeout(async () => {
+          try {
+            client.disconnect();
+            await client.connect(model, config);
+            console.log('[auto-reconnect] Reconnected successfully');
+          } catch (e) {
+            console.error('[auto-reconnect] Failed:', e);
+          }
+        }, 2000);
+      }
     };
 
     const onError = (error: ErrorEvent) => {
