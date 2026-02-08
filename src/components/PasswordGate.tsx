@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 
-const PASS_HASH = '5ea632ef78c3e6d64653087d3f810972f97691ae93e064b08e6dbca4a671cb8d';
+const PASS_HASH = 'b6b9fbdcb79928b3808cc932fbbee0a4abe8ceb0470fa53e69e9aef2c3a31890';
 
 async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
