@@ -65,7 +65,7 @@ type ConversationEntry = {
 
 function VoiceChatApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { setConfig, connected } = useLiveAPIContext();
+  const { client, setConfig, connected } = useLiveAPIContext();
   const { logs } = useLoggerStore();
   const [conversation, setConversation] = useState<ConversationEntry[]>([]);
   const conversationEndRef = useRef<HTMLDivElement>(null);
@@ -210,6 +210,32 @@ function VoiceChatApp() {
     }
     setConversation(entries);
   }, [logs, sendToBridge]);
+
+  // Listen for toolcall events from Gemini Live API
+  useEffect(() => {
+    const handleToolCall = (toolCall: any) => {
+      console.log('[voice-bridge] toolCall received:', toolCall);
+      const calls = toolCall.functionCalls || [];
+      for (const fc of calls) {
+        console.log(`[voice-bridge] Function: ${fc.name}, Args:`, fc.args);
+        const action = fc.name;
+        const params = fc.args || {};
+        
+        if (action === 'send_message') {
+          fetch(`${VOICE_BRIDGE_URL}/command`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ secret: VOICE_BRIDGE_SECRET, command: params.message }),
+          }).then(r => r.json()).then(d => console.log('[voice-bridge] result:', d)).catch(e => console.error('[voice-bridge] error:', e));
+        } else {
+          sendToBridge(action, params).catch(e => console.error('[voice-bridge] error:', e));
+        }
+      }
+    };
+    
+    client.on('toolcall', handleToolCall);
+    return () => { client.off('toolcall', handleToolCall); };
+  }, [client, sendToBridge]);
 
   // Auto-scroll conversation
   useEffect(() => {
