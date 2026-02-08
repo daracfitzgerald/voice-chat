@@ -211,6 +211,44 @@ function VoiceChatApp() {
     setConversation(entries);
   }, [logs, sendToBridge]);
 
+  // Poll for result from voice bridge relay
+  const pollForResult = useCallback(async (commandId: string, fcName: string, fcId: string, maxAttempts = 30) => {
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 3000)); // poll every 3s
+      try {
+        const resp = await fetch(`${VOICE_BRIDGE_URL}/result/${commandId}`);
+        const data = await resp.json();
+        if (data.status === 'complete') {
+          console.log(`[voice-bridge] Got result for ${commandId}:`, data.result);
+          // Send tool response back to Gemini so she can speak the result
+          client.sendToolResponse({
+            functionResponses: [{
+              id: fcId,
+              name: fcName,
+              response: { result: data.result },
+            }],
+          });
+          return;
+        }
+        if (data.status === 'not_found') {
+          console.log(`[voice-bridge] Command ${commandId} expired`);
+          return;
+        }
+      } catch (e) {
+        console.error('[voice-bridge] poll error:', e);
+      }
+    }
+    console.log(`[voice-bridge] Timed out waiting for ${commandId}`);
+    // Send timeout response so Gemini doesn't hang
+    client.sendToolResponse({
+      functionResponses: [{
+        id: fcId,
+        name: fcName,
+        response: { result: "OpenClaw is still processing this. The result will appear in Telegram." },
+      }],
+    });
+  }, [client]);
+
   // Listen for toolcall events from Gemini Live API
   useEffect(() => {
     const handleToolCall = (toolCall: any) => {
@@ -220,22 +258,36 @@ function VoiceChatApp() {
         console.log(`[voice-bridge] Function: ${fc.name}, Args:`, fc.args);
         const action = fc.name;
         const params = fc.args || {};
+        const fcId = fc.id || crypto.randomUUID();
         
+        let bridgePromise: Promise<any>;
         if (action === 'send_message') {
-          fetch(`${VOICE_BRIDGE_URL}/command`, {
+          bridgePromise = fetch(`${VOICE_BRIDGE_URL}/command`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ secret: VOICE_BRIDGE_SECRET, command: params.message }),
-          }).then(r => r.json()).then(d => console.log('[voice-bridge] result:', d)).catch(e => console.error('[voice-bridge] error:', e));
+          }).then(r => r.json());
         } else {
-          sendToBridge(action, params).catch(e => console.error('[voice-bridge] error:', e));
+          bridgePromise = fetch(`${VOICE_BRIDGE_URL}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ secret: VOICE_BRIDGE_SECRET, action, params }),
+          }).then(r => r.json());
         }
+
+        // Send to bridge, then poll for result
+        bridgePromise.then(data => {
+          console.log('[voice-bridge] bridge response:', data);
+          if (data.commandId) {
+            pollForResult(data.commandId, fc.name, fcId);
+          }
+        }).catch(e => console.error('[voice-bridge] error:', e));
       }
     };
     
     client.on('toolcall', handleToolCall);
     return () => { client.off('toolcall', handleToolCall); };
-  }, [client, sendToBridge]);
+  }, [client, sendToBridge, pollForResult]);
 
   // Auto-scroll conversation
   useEffect(() => {
